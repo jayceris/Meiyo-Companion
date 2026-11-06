@@ -1,6 +1,7 @@
 package site.meiyo.control
 
 import android.os.Bundle
+import android.graphics.BitmapFactory
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
@@ -24,8 +25,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -65,6 +67,10 @@ private data class BotState(
 @Composable
 private fun MeiyoApp() {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val logoBitmap = remember {
+        runCatching { BitmapFactory.decodeResource(context.resources, R.drawable.meiyo_logo)?.asImageBitmap() }.getOrNull()
+    }
     var bot by remember { mutableStateOf(BotState()) }
     var logs by remember { mutableStateOf("Waiting for bridge logs…") }
     var busy by remember { mutableStateOf(false) }
@@ -150,8 +156,16 @@ private fun MeiyoApp() {
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp)) {
-                    Image(painterResource(id = R.drawable.meiyo_logo), contentDescription = "Meiyo logo",
-                        modifier = Modifier.size(58.dp).clip(RoundedCornerShape(17.dp)), contentScale = ContentScale.Crop)
+                    if (logoBitmap != null) {
+                        Image(bitmap = logoBitmap, contentDescription = "Meiyo logo",
+                            modifier = Modifier.size(58.dp).clip(RoundedCornerShape(17.dp)), contentScale = ContentScale.Crop)
+                    } else {
+                        Surface(color = SurfaceB, shape = RoundedCornerShape(17.dp), modifier = Modifier.size(58.dp)) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("M", color = Pink, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
                     Column(Modifier.weight(1f)) {
                         Text("MEIYO", color = Pink, fontSize = 27.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                         Text("COMPANION  ·  CONTROL CENTER", color = Muted, fontSize = 10.sp, letterSpacing = 1.5.sp)
