@@ -6,13 +6,10 @@ import android.net.Uri
 import android.os.Bundle
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
-
-private const val DASHBOARD_URL = "http://127.0.0.1:8765/"
 
 class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
@@ -34,6 +31,7 @@ class MainActivity : ComponentActivity() {
             settings.builtInZoomControls = false
             settings.displayZoomControls = false
             settings.setSupportZoom(false)
+            settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
             webChromeClient = object : WebChromeClient() {
                 override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
                     fileChooserCallback?.onReceiveValue(null)
@@ -42,34 +40,25 @@ class MainActivity : ComponentActivity() {
                         addCategory(Intent.CATEGORY_OPENABLE)
                         type = "application/zip"
                     }
-                    return try {
-                        startActivityForResult(Intent.createChooser(intent, "Choose Meiyo ZIP"), fileChooserRequest)
-                        true
-                    } catch (_: Exception) {
-                        fileChooserCallback?.onReceiveValue(null)
-                        fileChooserCallback = null
-                        false
-                    }
-                }
-            }
-            webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                    val uri = request.url
-                    val local = uri.scheme == "http" && (uri.host == "127.0.0.1" || uri.host == "localhost") && (uri.port == 8765 || uri.port == -1)
-                    if (local) return false
-                    if (uri.scheme == "https" || uri.scheme == "http") runCatching { startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+                    startActivityForResult(intent, fileChooserRequest)
                     return true
                 }
             }
+            webViewClient = WebViewClient()
         }
         setContentView(webView)
-        if (savedInstanceState == null) webView.loadUrl(DASHBOARD_URL) else webView.restoreState(savedInstanceState)
+        val dashboard = assets.open("dashboard.html").bufferedReader().use { it.readText() }
+        // Keep the page origin on localhost so its API calls reach the Termux bridge without CORS.
+        webView.loadDataWithBaseURL("http://127.0.0.1:8765/", dashboard, "text/html", "UTF-8", null)
+
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() { if (webView.canGoBack()) webView.goBack() else finish() }
+            override fun handleOnBackPressed() {
+                if (webView.canGoBack()) webView.goBack() else finish()
+            }
         })
     }
 
-    @Deprecated("Deprecated in Android API")
+    @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == fileChooserRequest) {
@@ -79,10 +68,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onSaveInstanceState(outState: Bundle) { webView.saveState(outState); super.onSaveInstanceState(outState) }
     override fun onDestroy() {
-        fileChooserCallback?.onReceiveValue(null); fileChooserCallback = null
-        webView.stopLoading(); webView.webChromeClient = null; webView.webViewClient = WebViewClient(); webView.destroy()
+        fileChooserCallback?.onReceiveValue(null)
+        fileChooserCallback = null
+        webView.destroy()
         super.onDestroy()
     }
 }
