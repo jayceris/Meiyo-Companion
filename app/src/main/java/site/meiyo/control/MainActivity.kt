@@ -53,6 +53,7 @@ class MainActivity : ComponentActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                webView.evaluateJavascript("if (typeof exitFullscreen === 'function') { exitFullscreen(); }", null)
                 if (webView.canGoBack()) webView.goBack() else finish()
             }
         })
