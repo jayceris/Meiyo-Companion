@@ -5,7 +5,13 @@ const DATA=path.join(ROOT,'data'),LOG=path.join(DATA,'meiyo-control.log'),PID=pa
 const BACKUPS=path.join(DATA,'backups'),DASHBOARD=path.join(__dirname,'dashboard.html');
 fs.mkdirSync(DATA,{recursive:true});fs.mkdirSync(BACKUPS,{recursive:true});
 let shell=null,terminalBuffer='',terminalSeq=0;
-function getBotPid(){try{let p=Number(fs.readFileSync(PID,'utf8'));process.kill(p,0);return p}catch{return null}}
+function getBotPid(){
+  let saved=null;try{saved=Number(fs.readFileSync(PID,'utf8'))||null}catch{}
+  const alive=p=>{try{process.kill(p,0);return true}catch{return false}};
+  if(saved&&alive(saved))return saved;
+  try{for(const name of fs.readdirSync('/proc')){if(!/^\\d+$/.test(name))continue;const p=Number(name);if(p===process.pid)continue;let cmd='';try{cmd=fs.readFileSync('/proc/'+name+'/cmdline','utf8').replace(/\\0/g,' ')}catch{}if(/node .*src\\/index\\.js(?: |$)/.test(cmd)){try{fs.writeFileSync(PID,String(p))}catch{}return p}}}catch{}
+  return null
+}
 function startBot(){if(getBotPid())return 'Meiyo already running (PID '+getBotPid()+')';const fd=fs.openSync(LOG,'a');const p=spawn('node',['src/index.js'],{cwd:ROOT,detached:true,stdio:['ignore',fd,fd],env:process.env});p.unref();fs.writeFileSync(PID,String(p.pid));return 'Meiyo started (PID '+p.pid+')'}
 function stopBot(){const p=getBotPid();if(!p)return 'Meiyo is not running';try{process.kill(-p,'SIGTERM')}catch{try{process.kill(p,'SIGTERM')}catch{}}try{fs.unlinkSync(PID)}catch{}return 'Stop signal sent to Meiyo (PID '+p+')'}
 function appendTerminal(s){terminalBuffer+=String(s);terminalSeq+=String(s).length;if(terminalBuffer.length>160000)terminalBuffer=terminalBuffer.slice(-120000)}
@@ -17,8 +23,9 @@ function inspectZip(zip){const entries=execFileSync('unzip',['-Z1',zip],{encodin
 function mergeDir(src,dst,rel=''){fs.mkdirSync(dst,{recursive:true});for(const ent of fs.readdirSync(src,{withFileTypes:true})){const r=path.posix.join(rel,ent.name);if(!rel&&ent.name==='.env')continue;if(r==='data/backups'||r.startsWith('data/backups/'))continue;const from=path.join(src,ent.name),to=path.join(dst,ent.name);if(ent.isSymbolicLink())throw Error('Symbolic links are not accepted: '+r);if(ent.isDirectory())mergeDir(from,to,r);else if(ent.isFile()){fs.mkdirSync(path.dirname(to),{recursive:true});fs.copyFileSync(from,to)}}}
 const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://127.0.0.1:8765'),p=u.pathname;
 if(req.method==='GET'&&p==='/'){if(!fs.existsSync(DASHBOARD)){res.writeHead(500);return res.end('Dashboard file missing: '+DASHBOARD)}res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(fs.readFileSync(DASHBOARD))}
-if(req.method==='GET'&&p==='/api/status')return sendJson(res,200,{online:!!getBotPid(),pid:getBotPid(),root:ROOT});
-if(req.method==='GET'&&p==='/api/logs'){let logs='No logs yet';try{logs=fs.readFileSync(LOG,'utf8').slice(-14000)}catch{}res.writeHead(200,{'Content-Type':'text/plain; charset=utf-8'});return res.end(logs)}
+if(req.method==='GET'&&p==='/api/status'){const pid=getBotPid();return sendJson(res,200,{online:!!pid,pid,root:ROOT})}
+if(req.method==='GET'&&p==='/api/logs'){let logs='No bot log file yet. Start Meiyo from this panel to capture its output.';try{logs=fs.readFileSync(LOG,'utf8').slice(-20000)}catch{}res.writeHead(200,{'Content-Type':'text/plain; charset=utf-8'});return res.end(logs)}
+if(req.method==='GET'&&p==='/api/console'){let content='';try{content=fs.readFileSync(LOG,'utf8')}catch{}const size=Buffer.byteLength(content),since=Math.max(0,Number(u.searchParams.get('since')||0));const start=since>size?0:since;return sendJson(res,200,{text:content.slice(start),end:size,reset:since>size})}
 if(req.method==='POST'&&p==='/api/start')return sendJson(res,200,{message:startBot()});
 if(req.method==='POST'&&p==='/api/stop')return sendJson(res,200,{message:stopBot()});
 if(req.method==='POST'&&p==='/api/restart'){stopBot();setTimeout(()=>{try{startBot()}catch(e){fs.appendFileSync(LOG,'\n'+e.message)}},1200);return sendJson(res,200,{message:'Restart requested'})}
