@@ -1,18 +1,27 @@
-# Meiyo Control Android app
+# Meiyo Companion
 
-Native Android companion app for controlling the existing Meiyo bot installation in Termux.
+Android dashboard for the existing Meiyo bot in Termux. Keep the installation at **`~/meiyo`**.
 
-## Build the APK
-1. Open the **Actions** tab.
-2. Run **Build Meiyo Control APK**.
-3. Download the `Meiyo-Control-APK` artifact from the completed workflow.
-4. Extract and install `app-debug.apk`.
-
-## Termux bridge
-Copy `termux/meiyo-control-server.js` and `termux/meiyo-control-start.sh` into the root of your existing Meiyo bot folder, preserving `.env` and `data`. Then start the bridge from that folder:
-
-```sh
-bash scripts/meiyo-control-start.sh
+```
+~/meiyo/
+  src/  data/  package.json  .env
+  termux/
+    meiyo-control-server.js
+    meiyo-control-start.sh
+    dashboard.html
 ```
 
-The app connects to `127.0.0.1:8765`. The bridge binds to localhost only and controls the existing bot directory; it does not create a second bot installation.
+Copy all three files from this repository's `termux/` directory into `~/meiyo/termux/`. Do not replace your bot's `.env` or `src/`.
+
+Start in Termux:
+```sh
+cd ~/meiyo
+bash termux/meiyo-control-start.sh
+```
+The starter checks Node.js and installs `zip` and `unzip` if missing. Open the Companion app after the bridge starts.
+
+Features: bot controls, command registration, live-output bash console, fullscreen console, timestamped ZIP backups, and ZIP import. The console executes commands in `~/meiyo`; full TTY editors such as nano are not supported. Backups include source, config, .env and data but exclude node_modules, Git metadata and old backups. Imports require a top-level `meiyo/` folder, validate paths, create a safety backup, merge into the existing installation, and preserve the current root `.env` and `data/backups/`.
+
+The bridge binds to localhost only. Shell access is powerful; keep the device secured.
+
+Build: GitHub Actions → **Build Meiyo Control APK** → download `Meiyo-Control-APK`.
