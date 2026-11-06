@@ -15,7 +15,14 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
-      - uses: android-actions/setup-android@v3
+      # GitHub-hosted Ubuntu runners already include the Android SDK.
+      # Avoid android-actions/setup-android, which currently attempts to
+      # install the removed legacy "tools" package and fails before Gradle.
+      - name: Verify Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME/platform-tools"
+          test -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" || true
       - name: Build debug APK
         run: gradle assembleDebug
       - uses: actions/upload-artifact@v4
