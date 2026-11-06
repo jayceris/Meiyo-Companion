@@ -4,8 +4,8 @@
         android:allowBackup="false"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:label="Meiyo Companion"
-        android:icon="@drawable/meiyo_logo"
-        android:roundIcon="@drawable/meiyo_logo"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="true">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
