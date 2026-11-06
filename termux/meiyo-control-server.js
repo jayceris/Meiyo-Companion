@@ -1,43 +1,33 @@
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-const { spawn, execSync } = require('child_process');
-const ROOT = process.cwd();
-const LOG = path.join(ROOT, 'data', 'meiyo-control.log');
-const PID = path.join(ROOT, 'data', 'meiyo-control.pid');
-fs.mkdirSync(path.dirname(LOG), {recursive:true});
-let child = null;
-function running() {
-  try { const p = Number(fs.readFileSync(PID,'utf8')); process.kill(p,0); return p; }
-  catch { return null; }
-}
-function start() {
-  if (running()) return 'Meiyo already running (PID ' + running() + ')';
-  const out = fs.openSync(LOG,'a');
-  child = spawn('node',['src/index.js'],{cwd:ROOT,detached:true,stdio:['ignore',out,out],env:process.env});
-  child.unref();
-  fs.writeFileSync(PID,String(child.pid));
-  return 'Meiyo started (PID ' + child.pid + ')';
-}
-function stop() {
-  const p=running(); if(!p) return 'Meiyo is not running';
-  try { process.kill(-p,'SIGTERM'); } catch { try { process.kill(p,'SIGTERM'); } catch {} }
-  try { fs.unlinkSync(PID); } catch {}
-  return 'Stop signal sent to Meiyo (PID ' + p + ')';
-}
-const server=http.createServer((req,res)=>{
-  res.setHeader('Access-Control-Allow-Origin','*');
-  res.setHeader('Content-Type','text/plain; charset=utf-8');
-  let result='';
-  if(req.url==='/status') result=running() ? 'ONLINE · PID '+running() : 'OFFLINE';
-  else if(req.url==='/logs') { try { result=fs.readFileSync(LOG,'utf8').slice(-7000) || 'No logs yet'; } catch { result='No logs yet'; } }
-  else if(req.url==='/start') result=start();
-  else if(req.url==='/stop') result=stop();
-  else if(req.url==='/restart') { stop(); setTimeout(()=>start(),1200); result='Restart requested'; }
-  else if(req.url==='/register') {
-    try { const output=execSync('npm run commands',{cwd:ROOT,encoding:'utf8',timeout:120000,maxBuffer:2*1024*1024}); fs.appendFileSync(LOG,'\n'+output); result='Slash commands registered'; }
-    catch(e) { result='Registration failed: '+e.message; }
-  } else { res.statusCode=404; result='Not found'; }
-  res.end(result);
-});
-server.listen(8765,'127.0.0.1',()=>console.log('Meiyo Control bridge on 127.0.0.1:8765'));
+const http=require('http'),fs=require('fs'),path=require('path'),os=require('os');
+const {spawn,execFileSync}=require('child_process');
+const ROOT=path.resolve(process.env.MEIYO_ROOT||process.cwd()),DATA=path.join(ROOT,'data'),LOG=path.join(DATA,'meiyo-control.log'),PID=path.join(DATA,'meiyo-control.pid'),BACKUPS=path.join(DATA,'backups'),DASHBOARD=path.join(__dirname,'dashboard.html');
+fs.mkdirSync(DATA,{recursive:true});fs.mkdirSync(BACKUPS,{recursive:true});
+let shell=null,shellOutput='',outputSeq=0;
+function botPid(){try{const p=Number(fs.readFileSync(PID,'utf8'));process.kill(p,0);return p}catch{return null}}
+function startBot(){if(botPid())return 'Meiyo already running (PID '+botPid()+')';const out=fs.openSync(LOG,'a'),p=spawn('node',['src/index.js'],{cwd:ROOT,detached:true,stdio:['ignore',out,out],env:process.env});p.unref();fs.writeFileSync(PID,String(p.pid));return 'Meiyo started (PID '+p.pid+')'}
+function stopBot(){const p=botPid();if(!p)return 'Meiyo is not running';try{process.kill(-p,'SIGTERM')}catch{try{process.kill(p,'SIGTERM')}catch{}}try{fs.unlinkSync(PID)}catch{}return 'Stop signal sent to Meiyo (PID '+p+')'}
+function push(s){shellOutput+=String(s);outputSeq+=String(s).length;if(shellOutput.length>150000)shellOutput=shellOutput.slice(-100000)}
+function ensureShell(){if(shell&&!shell.killed)return;shell=spawn('bash',['--noprofile','--norc'],{cwd:ROOT,env:process.env,stdio:['pipe','pipe','pipe']});shell.stdout.on('data',push);shell.stderr.on('data',push);shell.on('close',()=>{shell=null;push('\n[Shell exited]\n')})}
+function json(res,status,obj){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(obj))}
+function body(req,max=300*1024*1024){return new Promise((resolve,reject)=>{let a=[],n=0;req.on('data',c=>{n+=c.length;if(n>max){reject(Error('Upload exceeds 300 MB'));req.destroy()}else a.push(c)});req.on('end',()=>resolve(Buffer.concat(a)));req.on('error',reject)})}
+function backupNow(){const stamp=new Date().toISOString().replace(/[:.]/g,'-'),name='meiyo-backup-'+stamp+'.zip',dest=path.join(BACKUPS,name);execFileSync('zip',['-qr',dest,'meiyo','-x','meiyo/node_modules/*','meiyo/.git/*','meiyo/data/backups/*'],{cwd:path.dirname(ROOT),stdio:'pipe'});return{name,path:dest}}
+function validateZip(zip){const names=execFileSync('unzip',['-Z1',zip],{encoding:'utf8',maxBuffer:20*1024*1024}).split(/\r?\n/).filter(Boolean);if(!names.length)throw Error('ZIP is empty');for(const n of names){const p=n.replace(/\\/g,'/');if(p.startsWith('/')||/^[A-Za-z]:/.test(p)||p.split('/').includes('..')||!p.startsWith('meiyo/'))throw Error('Unsafe entry or missing meiyo/ folder: '+n)}return names}
+function mergeTree(src,dst,rel=''){fs.mkdirSync(dst,{recursive:true});for(const e of fs.readdirSync(src,{withFileTypes:true})){const r=path.posix.join(rel,e.name);if(!rel&&e.name==='.env')continue;if(r==='data/backups'||r.startsWith('data/backups/'))continue;const a=path.join(src,e.name),b=path.join(dst,e.name);if(e.isSymbolicLink())throw Error('ZIP contains symbolic link: '+r);if(e.isDirectory())mergeTree(a,b,r);else if(e.isFile()){fs.mkdirSync(path.dirname(b),{recursive:true});fs.copyFileSync(a,b)}}}
+const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://127.0.0.1:8765'),p=u.pathname;
+if(req.method==='GET'&&p==='/'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(fs.readFileSync(DASHBOARD))}
+if(req.method==='GET'&&p==='/api/status')return json(res,200,{online:!!botPid(),pid:botPid()});
+if(req.method==='GET'&&p==='/api/logs'){let s='No logs yet';try{s=fs.readFileSync(LOG,'utf8').slice(-12000)}catch{}res.writeHead(200,{'Content-Type':'text/plain; charset=utf-8'});return res.end(s)}
+if(req.method==='POST'&&p==='/api/start')return json(res,200,{message:startBot()});
+if(req.method==='POST'&&p==='/api/stop')return json(res,200,{message:stopBot()});
+if(req.method==='POST'&&p==='/api/restart'){stopBot();setTimeout(()=>{try{startBot()}catch(e){fs.appendFileSync(LOG,'\n'+e.message)}},1200);return json(res,200,{message:'Restart requested'})}
+if(req.method==='POST'&&p==='/api/register'){const child=spawn('npm',['run','commands'],{cwd:ROOT,env:process.env,stdio:['ignore','pipe','pipe']});let out='';child.stdout.on('data',d=>out+=d);child.stderr.on('data',d=>out+=d);const code=await new Promise(resolve=>child.on('close',resolve));fs.appendFileSync(LOG,'\n'+out);return json(res,code?500:200,{message:code?'Registration failed: '+out:'Slash commands registered'})}
+if(req.method==='POST'&&p==='/api/terminal/run'){const j=JSON.parse((await body(req,1024*1024)).toString());if(typeof j.command!=='string'||!j.command.trim())return json(res,400,{error:'Command is empty'});ensureShell();shell.stdin.write(j.command+'\n');return json(res,200,{accepted:true})}
+if(req.method==='POST'&&p==='/api/terminal/input'){const j=JSON.parse((await body(req,4096)).toString());if(shell&&typeof j.input==='string')shell.stdin.write(j.input);return json(res,200,{ok:true})}
+if(req.method==='GET'&&p==='/api/terminal/output'){const since=Math.max(0,Number(u.searchParams.get('since')||0)),offset=Math.max(0,shellOutput.length-Math.max(0,outputSeq-since));return json(res,200,{text:shellOutput.slice(offset),end:outputSeq})}
+if(req.method==='POST'&&p==='/api/terminal/clear'){shellOutput='';outputSeq=0;return json(res,200,{ok:true})}
+if(req.method==='POST'&&p==='/api/backup'){const b=backupNow();return json(res,200,{name:b.name,url:'/api/backup/download?name='+encodeURIComponent(b.name)})}
+if(req.method==='GET'&&p==='/api/backup/download'){const name=path.basename(u.searchParams.get('name')||''),file=path.join(BACKUPS,name);if(!name.endsWith('.zip')||!fs.existsSync(file))return json(res,404,{error:'Backup not found'});res.writeHead(200,{'Content-Type':'application/zip','Content-Disposition':'attachment; filename="'+name+'"'});return fs.createReadStream(file).pipe(res)}
+if(req.method==='POST'&&p==='/api/import'){const name=u.searchParams.get('name')||'upload.zip';if(!name.toLowerCase().endsWith('.zip'))return json(res,400,{error:'Select a ZIP file'});const bytes=await body(req),tmp=fs.mkdtempSync(path.join(os.tmpdir(),'meiyo-import-')),zip=path.join(tmp,'upload.zip');fs.writeFileSync(zip,bytes);try{validateZip(zip);const ext=path.join(tmp,'unpacked');fs.mkdirSync(ext);execFileSync('unzip',['-q',zip,'-d',ext],{stdio:'pipe'});const source=path.join(ext,'meiyo');if(!fs.existsSync(source))throw Error('Missing meiyo/ folder');const b=backupNow();mergeTree(source,ROOT);return json(res,200,{message:'Installed '+name+'. Safety backup: '+b.name+'. Existing .env and data/backups were preserved.'})}finally{fs.rmSync(tmp,{recursive:true,force:true})}}
+res.writeHead(404);res.end('Not found');
+}catch(e){json(res,500,{error:e.message||String(e)})}});
+server.listen(8765,'127.0.0.1',()=>console.log('Meiyo dashboard at http://127.0.0.1:8765/ | '+ROOT));
